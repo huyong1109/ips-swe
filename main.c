@@ -20,6 +20,8 @@ int main(int argc,char **argv)
 	MetricCtx      metric[1];
 	BdyCtx         bdy[1];
 	EventCtx       event[1];
+	FILE	       *fp;
+	char           filename[256];
 	PetscViewer    viewer;
 
 	PetscInitialize(&argc,&argv,(char *)0,help);
@@ -45,6 +47,8 @@ int main(int argc,char **argv)
 	param.coriolis = CORIOLIS;
 
 	/* Time-stepping context */
+
+	tsctx.tscurr    = 0;
 	tsctx.tstart    = 0.0;
 	tsctx.tfinal    = 1.0;
 	tsctx.tsize     = 0.05;
@@ -68,6 +72,8 @@ int main(int argc,char **argv)
 	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 	user->viewer   = viewer;
 	user->sol      = PETSC_NULL;
+	user->vecs     = PETSC_NULL;
+	user->ls       = PETSC_NULL;
 	user->lx       = PETSC_NULL;
 	user->ly       = PETSC_NULL;
 	user->comm     = comm;
@@ -90,7 +96,9 @@ int main(int argc,char **argv)
 	CHKMEMQ;
 	
 	ierr = DMGetGlobalVector(user->swe->da, &(user->sol)); CHKERRQ(ierr);
-	ierr = DMGetGlobalVector(user->swe->da, &(user->metric->tensor)); CHKERRQ(ierr);
+	ierr = DMGetGlobalVector(user->swe->da, &(user->vecs)); CHKERRQ(ierr);
+	ierr = DMGetGlobalVector(user->swe->da, &(user->ls)); CHKERRQ(ierr);
+	ierr = DMGetLocalVector(user->swe->da, &(user->metric->tensor)); CHKERRQ(ierr);
 
 	ierr = PetscPrintf(PETSC_COMM_WORLD, "\n PreLoading %G \n", param.PreLoading); CHKERRQ(ierr);
 	if (param.PreLoading) {
@@ -120,9 +128,11 @@ int main(int argc,char **argv)
 	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 	PetscPreLoadStage("Solve");
+	ierr = PetscPrintf(PETSC_COMM_WORLD," Begin Update!\n"); CHKERRQ(ierr);
 
-	//ierr = Update(user); CHKERRQ(ierr);
-	//CHKMEMQ;
+	ierr = Update(user); CHKERRQ(ierr);
+
+	CHKMEMQ;
 
 	/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 	   Free work space.  All PETSc objects should be destroyed when they
@@ -130,6 +140,8 @@ int main(int argc,char **argv)
 	   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 	
 	ierr = DMRestoreGlobalVector(user->swe->da, &user->sol); CHKERRQ(ierr);
+	ierr = DMRestoreGlobalVector(user->swe->da, &user->vecs); CHKERRQ(ierr);
+	ierr = DMRestoreGlobalVector(user->swe->da, &user->ls); CHKERRQ(ierr);
 
 	ierr = SWEFinalize(user); CHKERRQ(ierr);
 	ierr = PetscViewerDestroy(&viewer); CHKERRQ(ierr);
@@ -160,12 +172,19 @@ PetscErrorCode Update(UserCtx *user)
 
 	PetscFunctionBegin;
 
-	if (param->PreLoading) {
+	if (!param->PreLoading) {
 		max_steps = 1;
 	} else {
 		max_steps = tsctx->tsmax;
 	}
+	PetscInt i;
+	for (i = 0; i<= max_steps; i++){
+	    ierr = ExplicitStep(user);
 
+	    tsctx->tscurr++;
+	    tsctx->tscurr += tsctx->tsize;
+	}
+	
 	PetscFunctionReturn(0);
 }
 
@@ -184,6 +203,7 @@ PetscErrorCode FormInitialValue(UserCtx *user)
 	DM              da = user->swe->da;
 	PassiveScalar   dx = user->dx, dy = user->dy;
 	ActiveField     **x=0;
+	PassiveScalar	**vecs;
 	MetricField     **tensor;
 	PetscInt        i, j, k, xl, yl, nxl, nyl, xg, yg, nxg, nyg;
 	char            filename[PETSC_MAX_PATH_LEN-1];
@@ -198,6 +218,7 @@ PetscErrorCode FormInitialValue(UserCtx *user)
 	ierr = PetscPrintf(PETSC_COMM_WORLD, "\n Get Corners  \n"); CHKERRQ(ierr);
 
 	ierr = DMDAVecGetArray(da,  user->sol, &x); CHKERRQ(ierr);
+	ierr = DMDAVecGetArray(da,  user->sol, &vecs); CHKERRQ(ierr);
 	ierr = PetscPrintf(PETSC_COMM_WORLD, "\n Get Corners  \n"); CHKERRQ(ierr);
 	ierr = DMDAVecGetArray(da, metric->tensor, &tensor); CHKERRQ(ierr);
 
@@ -213,15 +234,23 @@ PetscErrorCode FormInitialValue(UserCtx *user)
 			x[j][i].eta = exp(-abs(xi) -abs(yj));
 			x[j][i].U = 0.;
 			x[j][i].V = 0.;
+			vecs[j][i] = x[j][i].eta;
 			tensor[j][i].H = h0;
+			x[j][i].H = h0 + x[j][i].eta;
 		}
 	}
 	
+	sprintf( filename, "init.dat");
+	ierr = DataShow(user->vecs, "eta"); CHKERRQ(ierr);
+	//ierr = VecView(user->sol, user->viewer); CHKERRQ(ierr);
 	ierr = PetscPrintf(PETSC_COMM_WORLD, "\n End Initiate  \n"); CHKERRQ(ierr);
 	
 
 	ierr = DMDAVecRestoreArray(da, user->sol, &x); CHKERRQ(ierr);
+	ierr = DMDAVecRestoreArray(da, user->vecs, &vecs); CHKERRQ(ierr);
 	ierr = DMDAVecRestoreArray(da, metric->tensor, &tensor); CHKERRQ(ierr);
+
+	ierr = VecCopy(user->sol, user->ls); CHKERRQ(ierr);
 	PetscFunctionReturn(0);
 }
 

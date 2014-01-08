@@ -11,7 +11,7 @@
 
 
 #define MESHSIZE  12
-#define WIDTH     2
+#define WIDTH     1
 #define XLOW   (-250.)
 #define XHI    (250.)
 #define YLOW   (-250.)
@@ -32,7 +32,7 @@ typedef struct
 	PetscInt       torder;            // order of temporal discretization
 } TstepCtx; 
 
-typedef struct { PetscScalar eta, U,  V; }   ActiveField;
+typedef struct { PetscScalar eta, H, U,  V; }   ActiveField;
 
 typedef struct { PetscScalar eta, U,  V; }   BdyField;
 
@@ -86,6 +86,8 @@ typedef struct {
 	PetscInt       meshsize;
 	PetscInt       px,py,*lx,*ly;
 	Vec	       sol;
+	Vec	       ls;
+	Vec	       vecs;
 	PassiveScalar  dx,dy;
 	PetscViewer    viewer;
 } UserCtx;
@@ -95,7 +97,11 @@ EXTERN_C_BEGIN
 extern PetscErrorCode SWEInitialize( UserCtx* user);
 extern PetscErrorCode SWEFinalize( UserCtx* user );
 extern PetscErrorCode Update(UserCtx *user);
+extern PetscErrorCode ExplicitStep(UserCtx *user);
 extern PetscErrorCode FormInitialValue(UserCtx *user);
+extern PetscErrorCode DataLoad(Vec x, char *filename);
+extern PetscErrorCode DataSave(Vec x, char *filename);
+extern PetscErrorCode DataShow(Vec x, char *vecname);
 
 EXTERN_C_END
 
